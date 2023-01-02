@@ -1,0 +1,266 @@
+---
+title: "Midterm Presentation"
+author: "Cesar Godoy"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+  pdf_document:
+    toc: yes
+---
+<style>
+h1.title {
+  font-size: 30px;
+}
+h1 {
+  font-size: 26px;
+}
+h2 {
+  font-size: 22px;
+}
+h3 { 
+  font-size: 18px;
+}
+
+</style>
+# Article
+Most Desirable Traits for a Fifa Character
+
+https://www.fifa-infinity.com/fifa-21/top-player-traits-to-look-out-for-in-fifa-21/
+
+The article devides fifa characters into broad categories and gives the author's opinion on which attributes are most valuable.
+
+# Data
+Description:
+The dataset represents cards for players in Fifa Ultimate Team, an online game mode, for Fifa21. It contains 17,615 players with 95 different attributes  and it includes the card prices on PlayStation4, Xbox and Computer versions of the game for the month of October 2020.
+
+Source:
+This dataset can be found at: https://www.kaggle.com/stefanoleone992/fifa-21-ultimate-team-players-and-prices-dataset. 
+
+Connection to the article:
+Using this information, I can see which attributes Fifa players value the most when purchasing a character by seeing which attributes scores have the highest correlation with prices.
+```{r}
+setwd(getwd())
+library(tidyverse)
+players <- read.csv("fut_bin21_players.csv")
+head(players)
+```
+# Plan
+Make a multivariate linear regression with prices for players in fifa21 ultimate team game mode against attributes and check which coefficients are highest.
+
+# Data Validation
+The data types for the columns I will use seem to be correct. But the data needs some validation:<br>
+
+remove null values from fields I intend to use. Remove all goalkeepers as the analysis will be based only on the other positions  
+```{r}
+court<-players[(players$position!="GK"),]
+court<-court %>% drop_na(
+  ps4_min,
+  overall,
+  shooting,
+  pace,
+  dribbling,
+  passing,
+  defending,
+  physicality,
+  position
+  )
+```
+Simplify positions into forward, winger, midfielder and defender. Create separate tables for each so I can analyze them separately.
+```{r}
+for(item in 1:nrow(court)){
+  if(str_detect(court$position[item],"ST|CF|RF|LF")){
+    court$position[item] = "Forward"
+  }else if(str_detect(court$position[item],"CM|CAM|RM|LM")){
+    court$position[item] = "Midfield"
+  }else if(str_detect(court$position[item],"RW|LW")){
+      court$position[item] = "Winger"
+  }else{
+    court$position[item] = "Defender"
+  }
+}
+court$priceRelToPos <- c(1:nrow(court))
+fw <- court[(court$position=="Forward"),]
+wi <- court[(court$position=="Winger"),]
+md <- court[(court$position=="Midfield"),]
+df <- court[(court$position=="Defender"),]
+```
+for future plans, it will be more significant to see players prices relative to the average price for the position they play - as their average prices are significantly different
+```{r}
+court$priceRelToPos <- c(1:nrow(court))
+fwMean<-mean(fw$ps4_min)
+wiMean<-mean(wi$ps4_min)
+mdMean<-mean(md$ps4_min)
+dfMean<-mean(df$ps4_min)
+createRelativePrices <- function(pos,avrg,item){
+  if(court$position[item] == pos){
+     return(court$ps4_min[item]/avrg)
+  }else{return(-1)}
+}
+for(item in 1:nrow(court)){
+  #use max because in createRelativePrices, if court$position[item]!=pos
+  #then it returns -1.
+  court$priceRelToPos[item]<-max(createRelativePrices("Forward",fwMean,item),
+  createRelativePrices("Midfield",mdMean,item),
+  createRelativePrices("Winger",wiMean,item),
+  createRelativePrices("Defender",dfMean,item))
+  if(court$priceRelToPos[item]==-1){print("error "+item)}
+}
+```
+# Functions I will use in the project
+```{r}
+linearModel <- function(data){ 
+  #returns linear model based on the analyzed attributes given the relevant data 
+  #points (forward,winger...)
+  return(lm(ps4_min ~ 
+        shooting+pace+dribbling+passing+defending+physicality
+              , data))
+}
+coef<-function(model){
+  #takes in a model and returns a list of the model coefficients 
+  #([2] is shooting and so on)
+  return(summary(model)$coefficient)
+}
+rsq<-function(model){
+  #takes in a model and returns the adjusted r squared for it
+  return(summary(model)$adj.r.squared)
+}
+plotting<-function(info,yzoom,title,xlab){
+  return(ggplot(court,aes(x=info,y=priceRelToPos,color=position))+geom_point(size=1)+geom_smooth(se=FALSE,method = 'gam', formula = y ~ s(x, bs = "cs"),span = 0.1) + coord_cartesian(ylim=c(0, yzoom))
+    + labs(title=title,y="Price Relative to Position Average",x=xlab))}
+
+model <- function(data,d){ 
+  #returns polynomial model based on the analyzed attributes given the relevant data points (forward,winger...) as well as degree of regression
+  return(lm(priceRelToPos ~ 
+        poly(pace, degree=d)
+        + poly(shooting, degree=d)
+        + poly(physicality, degree=d)
+        + poly(dribbling, degree=d)
+        + poly(passing, degree=d)
+        + poly(defending, degree=d)
+              , data))
+}
+```
+
+# Plots: following the plan
+```{r}
+#TODO create linear regression and plot bar plots with coefficients
+
+coefs<- data.frame(data = c("shooting","pace","dribbling","passing","defending","phisicality"))
+showLinear <- data.frame(data=c("general","forward","winger","midfielder","defender"))
+modelGen <- linearModel(court)
+for(item in 1:6){
+  coefs$gen[item] <- coef(modelGen)[item+1]
+}
+
+modelfw <- linearModel(fw)
+for(item in 1:6){
+  coefs$forward[item] <- coef(modelfw)[item+1]
+}
+
+modelwi <- linearModel(wi)
+for(item in 1:6){
+  coefs$winger[item] <- coef(modelwi)[item+1]
+}
+
+
+modelmd <- linearModel(md)
+for(item in 1:6){
+  coefs$midfielder[item] <- coef(modelmd)[item+1]
+}
+
+modeldf <- linearModel(df)
+for(item in 1:6){
+  coefs$defender[item] <- coef(modeldf)[item+1]
+}
+
+ggplot(data=coefs, aes(x=data, y = gen)) +
+geom_bar(stat="identity") + labs(title = "Multivariate Linear Regression Coefficient by Attribute",y="coefficient",x="attributes")
+
+ggplot(data=coefs, aes(x=data, y = forward)) +
+geom_bar(stat="identity") + labs(title = "Multivariate Linear Regression Coefficient by Attribute for Forwards",y="coefficient",x="attributes")
+
+ggplot(data=coefs, aes(x=data, y = winger)) +
+geom_bar(stat="identity") + labs(title = "Multivariate Linear Regression Coefficient by Attribute for Wingers",y="coefficient",x="attributes")
+
+ggplot(data=coefs, aes(x=data, y = midfielder)) +
+geom_bar(stat="identity")+ labs(title = "Multivariate Linear Regression Coefficient by Attribute for Midfielders",y="coefficient",x="attributes")
+
+ggplot(data=coefs, aes(x=data, y = defender)) +
+geom_bar(stat="identity") + labs(title = "Multivariate Linear Regression Coefficient by Attribute for Defenders",y="coefficient",x="attributes")
+```
+With this, it seems like we can already rank which attributes for each player are most valued by fifa ultimate team's internal market. <br>
+Let's check the R squared value to verify how valid the answer is:
+```{r}
+showLinear$rsq[1]<-rsq(modelGen) 
+showLinear$rsq[2]<-rsq(modelfw) 
+showLinear$rsq[3]<-rsq(modelwi) 
+showLinear$rsq[4]<-rsq(modelmd)
+showLinear$rsq[5]<-rsq(modeldf)
+
+ggplot(data=showLinear, aes(x=data, y = rsq)) +
+geom_bar(stat="identity") + coord_cartesian(ylim=c(0, 1)) + labs(title = "R squared values for multivariate linear regression by position", x="position",y="R squared" )
+```
+The R squared values are really low. This is surprising, since the player's value should only depend on his attributes. Let's look into the data to see what's going on:
+
+# What's going on
+```{r}
+pace<-plotting(court$pace,50,"Relation Between Player's Price Relative to His\n Position and His Pace Score","Pace")
+dribbling<-plotting(court$dribbling,110,"Relation Between Player's Price Relative to His\n Position and His Dribbling Score","Dribbling") 
+shooting<-plotting(court$shooting,140,"Relation Between Player's Price Relative to His\n Position and His Shooting Score","Shooting")
+passing<-plotting(court$passing,80,"Relation Between Player's Price Relative to His\n Position and His Passing Score","Passing")
+defending<-plotting(court$defending,100,"Relation Between Player's Price Relative to His\n Position and His Defending Score","Defending")
+physicality<-plotting(court$physicality,60,"Relation Between Player's Price Relative to His\n Position and His Physicality","Physicality")
+overall<-plotting(court$overall,200,"Relation Between Player's Price Relative to His\n Position and His Overall Score","overall")
+
+overall
+pace
+dribbling
+shooting
+passing
+defending
+physicality
+```
+I decided to use price relative to position they play, so the plots look more relevant - We were using separate tables for each category before but putting them together would just show a distorted plot for players with a smaller average price.<br>
+
+plot's conclusion:
+The reason our regression earlier had such small R squared values is that the nature of this scatterplot doesn't seem to be linear. Let's see which degree best fits our data then.
+
+```{r}
+rsqByRegressionDeg <- data.frame(data = c(1,2,3,4,5))
+for(item in 1:4){
+  rsqByRegressionDeg$general[item] <- round(rsq(model(court,item)),2)
+  rsqByRegressionDeg$forward[item] <- round(rsq(model(fw,item)),2)
+  rsqByRegressionDeg$winger[item] <- round(rsq(model(court,item)),2)
+  rsqByRegressionDeg$midfielder[item] <- round(rsq(model(court,item)),2)
+  rsqByRegressionDeg$defender[item] <- round(rsq(model(court,item)),2)
+}
+ggplot(data=rsqByRegressionDeg, aes(x=data, y = general)) +
+  geom_bar(stat="identity")+ coord_cartesian(ylim=c(0, 1)) + labs(title="R squared value by degree of the regression for general player",x="degree of regression", y="R squared value")
+ggplot(data=rsqByRegressionDeg, aes(x=data, y = forward)) +
+  geom_bar(stat="identity")+ coord_cartesian(ylim=c(0, 1))+ labs(title="R squared value by degree of the regression for forwards",x="degree of regression", y="R squared value")
+ggplot(data=rsqByRegressionDeg, aes(x=data, y = winger)) +
+  geom_bar(stat="identity")+ coord_cartesian(ylim=c(0, 1))+ labs(title="R squared value by degree of the regression for wingers",x="degree of regression", y="R squared value")
+ggplot(data=rsqByRegressionDeg, aes(x=data, y = midfielder)) +
+  geom_bar(stat="identity")+ coord_cartesian(ylim=c(0, 1)) + labs(title="R squared value by degree of the regression for midfielders",x="degree of regression", y="R squared value")
+ggplot(data=rsqByRegressionDeg, aes(x=data, y = defender)) +
+  geom_bar(stat="identity")+ coord_cartesian(ylim=c(0, 1)) + labs(title="R squared value by degree of the regression for Defenders",x="degree of regression", y="R squared value")
+
+```
+it seems like the data fits best a fourth degree polynomial regression. This explains well why our R squared values were so low previously
+
+# Conclusion
+in conclusion, using the multivariate linear regression model, we can conclude that the following attributes are the most important for each position:<br>
+general: physicality, passing, pace and shooting<br>
+forwards: mostly shooting and a pace (a little)<br>
+wingers: mostly passing and pace. Shooting and dribbling also seem important<br>
+midfielders: mostly passing. A little pace and physicality<br>
+defenders: mostly defending. A little pace.<br>
+<br>
+The article is in accordance with some of these conclusions and against others. The author agrees that shooting is the most important attribute for a forward and that passing is important for midfielders as well as that defending is important for defenders. Nevertheless, they seem to exaggerate the role of dribbling in the game.<br>
+
+As we have seen, this conclusion is not without its limitations. The R-squared value it's based on is small since the nature of the data is polynomial(to the fourth degree). 
+
+
