@@ -29,7 +29,14 @@ str(keepers)
 ```
 ```{r}
 keepers <- keepers[keepers$league != "Icons",]
-na_rows <- c("origin", "pace", "dribbling", "passing","defending", "shooting", "physicality")
+na_rows <- c("origin", "pace", "dribbling", "passing","defending", "shooting", "physicality", "specialities", "cb", "rb",
+             "lb", "rwb", "lwb", "cdm","cm")
 keepers <- keepers[,!names(keepers)%in%na_rows]
-
+a <- keepers[complete.cases(keepers),]
+```
+```{r}
+table(is.na(keepers$cb))
+```
+```{r}
+table(keepers$specialities)
 ```
