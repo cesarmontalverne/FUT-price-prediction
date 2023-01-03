@@ -8,20 +8,64 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
+library(plotly)
 ```
 
 ## R Markdowns
 ```{r}
-players <- read.csv("fut_bin21_players.csv")
+players_read <- read.csv("fut_bin21_players.csv")
+```
+```{r}
+normalize <- function(x){
+ (x - min(x)) / (max(x) - min(x))
+}
+players_temp <- players_read[!is.na(players_read$ps4_last),]
+players_temp <- players_temp %>% filter(position!="GK") %>% group_by(league) %>% 
+  summarise(avg_pace = sum(pace)/n(), avg_shooting = sum(shooting)/n(), avg_ps4 = sum(ps4_last)/n(),
+            avg_def = sum(defending)/n(), avg_age = sum(age)/n(), count =n()) 
+players_temp <- players_temp[order(players_temp$avg_ps4, decreasing =TRUE),]
+
+players_temp[,c(2:7)] <- lapply(players_temp[,c(2:7)], normalize)
+fig <- plot_ly(players_temp[1:4,], x = ~league, y=~avg_ps4, type="bar", name="avg ps4_price")
+fig <- fig %>% add_trace(y = ~avg_pace, name = 'avg pace', type = "bar")
+fig <- fig %>% add_trace(y = ~avg_shooting, name = 'avg shooting', type = "bar")
+fig <- fig %>% add_trace(y = ~avg_def, name = 'avg defending', type = "bar")
+fig <- fig %>% add_trace(y = ~avg_age, name = 'avg age', type = "bar")
+fig <- fig %>% add_trace(y = ~count, name = 'count', type = "bar")
+fig <- fig %>% layout(yaxis = list(title = 'Normalized Value'), title = "Normalized Stats of 4 Most Expensive Leagues", barmode = 'group')
+fig
+
+```
+```{r}
+naPercentage <- function(col_name){
+  return(sum(is.na(players_read[,col_name]))/nrow(players_read))
+}
+nas <- c("xbox_min", "xbox_last", "xbox_max", "ps4_min","ps4_last", "ps4_max", "pc_min","pc_last", "pc_max")
+price_nas <- data.frame(nas = nas, console = rep(c("xbox","ps4", "pc"), each=3), type = rep(c("min", "last", "max"), times=3))
+price_nas[,1] <- sapply(price_nas[,1],naPercentage)
+fig <- plot_ly(price_nas, x = ~console, y=~nas, color = ~type,type="bar")
+fig <- fig %>% layout(yaxis = list(title = 'Percentage'), title = "Percentage Nulls per Console", barmode = 'group')
+
+fig
+```
+```{r}
+players <- players_read[players_read$league != "Icons",]
+xbox_vec <- c("xbox_last","xbox_max", "xbox_min", "xbox_prp")
+pc_vec <- c("pc_last","pc_max", "pc_min", "pc_prp")
+player_unused_cols <- c("futbin_id","date_of_birth","origin","added_date", "base_id", "resource_id", xbox_vec, pc_vec, "ps4_prp", "specialities")
+players <- players[,!names(players)%in%player_unused_cols]
+```
+```{r}
 keepers <- players[players$position=="GK",]
 line <- players %>% filter(position!="GK")
 ```
+
 
 ```{r}
 #table(keepers$league)
 #table(keepers$quality)
 #table(keepers$quality)
-table(keepers$origin)
+table(players$league=="Icons")
 nrow(keepers)
 ```
 ```{r}
@@ -29,13 +73,17 @@ str(keepers)
 ```
 ```{r}
 keepers <- keepers[keepers$league != "Icons",]
-na_rows <- c("origin", "pace", "dribbling", "passing","defending", "shooting", "physicality", "specialities", "cb", "rb",
-             "lb", "rwb", "lwb", "cdm","cm")
-keepers <- keepers[,!names(keepers)%in%na_rows]
-a <- keepers[complete.cases(keepers),]
+keeper_unused_cols <- c("pace", "dribbling", "passing","defending", "shooting", "physicality", "cb", "rb",
+             "lb", "rwb", "lwb", "cdm","cm","rm", "lm", "cm", "cam", "cf", "rf", "lf", "rw", "lw", "st")
+keepers <- keepers[,!names(keepers)%in%keeper_unused_cols]
 ```
 ```{r}
-table(is.na(keepers$cb))
+
+keepers_ps4 <- keepers[,!names(keepers)%in%c(xbox_vec,pc_vec,"ps4_prp")]
+#keepers_xbox <- keepers[,!names(keepers)%in%c(ps4_vec,pc_vec)] #target would be mostly nulls
+#keepers_pc <- keepers[,!names(keepers)%in%c(ps4_vec,xbox_vec)] #target would be mostly nulls
+```
+```{r}
 ```
 ```{r}
 table(keepers$specialities)
