@@ -7,14 +7,29 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
 ```
 
 ## R Markdowns
 ```{r}
 players <- read.csv("fut_bin21_players.csv")
-head(players)
+keepers <- players[players$position=="GK",]
+line <- players %>% filter(position!="GK")
 ```
 
 ```{r}
-table(players$player_name)
+#table(keepers$league)
+#table(keepers$quality)
+#table(keepers$quality)
+table(keepers$origin)
+nrow(keepers)
+```
+```{r}
+str(keepers)
+```
+```{r}
+keepers <- keepers[keepers$league != "Icons",]
+na_rows <- c("origin", "pace", "dribbling", "passing","defending", "shooting", "physicality")
+keepers <- keepers[,!names(keepers)%in%na_rows]
+
 ```
