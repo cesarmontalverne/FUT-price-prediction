@@ -88,3 +88,45 @@ keepers_ps4 <- keepers[,!names(keepers)%in%c(xbox_vec,pc_vec,"ps4_prp")]
 ```{r}
 table(keepers$specialities)
 ```
+
+
+#Peter's code
+```{r}
+players <- read.csv("fut_bin21_players.csv")
+players <- players[players$league != "Icons",]
+```
+
+```{r}
+line <- players %>% filter(position!="GK")
+```
+
+```{r}
+#table(line$league)
+table(line$quality)
+table(line$quality)
+table(line$origin)
+nrow(line)
+```
+
+```{r}
+line_unused_cols <- c("gk_diving", "gk_reflexes", "gk_speed", "gk_positoning", "gk_kicking", "gk_handling", "cb", "rb","lb", "rwb", "lwb", "cdm","cm","rm", "lm", "cm", "cam", "cf", "rf", "lf", "rw", "lw", "st")
+line <- line[,!names(line)%in%line_unused_cols]
+
+```
+
+```{r}
+defenders <- line[line$position%in%c("CB","LCB", "RCB", "LWB", "RWB", "RB", "LB"),]
+midfielders <- line[line$position%in%c("CM","RCM","LCM", "CDM", "CAM", "LM", "RM"),]
+attackers <- line[line$position%in%c("CF","RF","LF", "ST", "RW", "LW"),]
+```
+
+```{r}
+xbox_vec <- c("xbox_last","xbox_max", "xbox_min", "xbox_prp")
+pc_vec <- c("pc_last","pc_max", "pc_min", "pc_prp")
+line_ps4 <- line[,!names(line)%in%c(xbox_vec ,pc_vec,"ps4_prp")]
+#line_xbox <- line[,!names(line)%in%c(ps4_vec,pc_vec)] #target would be mostly nulls
+#line_pc <- line[,!names(line)%in%c(ps4_vec,xbox_vec)] #target would be mostly nulls
+```
+```{r}
+```
+#End of Peter's code
