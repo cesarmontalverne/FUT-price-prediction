@@ -2,14 +2,16 @@
 title: "Final"
 author: "cesar"
 date: "2023-01-06"
-output: html_document
+output: slidy_presentation
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 ```{r}
-library(plot)
+library(plotly)
+library(ggplot2)
+library(gridExtra)
 load("workdata.RData")
 ```
 
@@ -28,7 +30,6 @@ target_nas
 ```{r}
 cluster_vis <- function(df){ plot_ly(data = df, x = ~overall, y = ~ps4_last, color=~clusterNum)}
 players_price_points <- plot_ly(data = players, x = ~overall, y = ~ps4_last, trace="scatter")
-par(mfrow=c(2,2))
 players_price_points
 ```
 ```{r}
@@ -55,13 +56,19 @@ We compared leagues and plotted averages for the four most expensive leagues in 
 tried rfs.
 weren't satisfied
 ```{r}
-keeper_elbow
-defender_elbow
-midfielder_elbow
-attacker_elbow
+grid.arrange(keeper_elbow,defender_elbow,midfielder_elbow,attacker_elbow)
 ```
 tried to cluster, as a means to remove outliers
 ```{r}
+
+keeper_outliers <- keeper_cluster %>% group_by(clusterNum) %>% dplyr::summarise(count=n())
+defenders_outliers <- defender_cluster %>% group_by(clusterNum) %>% dplyr::summarise(count=n())
+midfielders_outliers <- midfielder_cluster %>% group_by(clusterNum) %>% dplyr::summarise(count=n())
+attackers_outliers <- attacker_cluster %>% group_by(clusterNum) %>% dplyr::summarise(count=n())
+knitr::kable(keeper_outliers, caption="keeper")
+knitr::kable(defenders_outliers, caption="defender")
+knitr::kable(midfielders_outliers, caption="midfielder")
+knitr::kable(attackers_outliers, caption="attacker")
 
 ```
 ```{r}
@@ -69,5 +76,11 @@ cluster_vis(keeper_cluster)
 cluster_vis(defender_cluster)
 cluster_vis(midfielder_cluster)
 cluster_vis(attacker_cluster)
+```
 
+# Results
+```{r}
+results <- data.frame(model=c("before","after"), keeper = c(b_keepers_rmse, keepers_rmse), defender = c(b_defenders_rmse,defenders_rmse),
+                      midfielders = c(b_midfielders_rmse, midfielders_rmse), attackers = c(b_attackers_rmse, attackers_rmse))
+knitr::kable(results, caption="Results")
 ```
