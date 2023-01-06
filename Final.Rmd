@@ -4,36 +4,33 @@ author: "cesar"
 date: "2023-01-06"
 output: html_document
 ---
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-library(tidyverse)
-library(plotly)
-
-library(tidyverse)
-library(randomForest)
-library(rio)
-library(mltools)
-library(data.table)
-library(caret)
-library(C50)
-library(pROC)
-library(plotly)
-library(MLmetrics)
-library(ROCR)
-library(rpart)
-library(psych)
-library(plyr)
-library(rattle)
-library(rpart.plot)
-library(NbClust)
 ```
 ```{r}
-players_read <- read.csv("fut_bin21_players.csv")
-normalize <- function(x){
- (x - min(x)) / (max(x) - min(x))
-}
+library(plot)
+load("workdata.RData")
 ```
 
+# Explanatory Data Analysis
+```{r}
+naPercentage <- function(col_name){
+  return(sum(is.na(players_read[,col_name]))/nrow(players_read))
+}
+nas <- c("xbox_min", "xbox_last", "xbox_max", "ps4_min","ps4_last", "ps4_max", "pc_min","pc_last", "pc_max")
+price_nas <- data.frame(nas = nas, console = rep(c("xbox","ps4", "pc"), each=3), type = rep(c("min", "last", "max"), times=3))
+price_nas[,1] <- sapply(price_nas[,1],naPercentage)
+target_nas <- plot_ly(price_nas, x = ~console, y=~nas, color = ~type,type="bar")
+target_nas <- target_nas %>% layout(yaxis = list(title = 'Percentage'), title = "Percentage Nulls per Console", barmode = 'group')
+target_nas
+```
+```{r}
+cluster_vis <- function(df){ plot_ly(data = df, x = ~overall, y = ~ps4_last, color=~clusterNum)}
+players_price_points <- plot_ly(data = players, x = ~overall, y = ~ps4_last, trace="scatter")
+par(mfrow=c(2,2))
+players_price_points
+```
 ```{r}
 players_temp <- players_read[!is.na(players_read$ps4_last),]
 players_temp <- players_temp %>% filter(position!="GK") %>% group_by(league) %>% 
@@ -43,159 +40,34 @@ players_temp <- players_temp[order(players_temp$avg_ps4, decreasing =TRUE),]
 players_temp[,c(2:7)] <- lapply(players_temp[,c(2:7)], normalize)
 
 players_temp[,c(2:7)] <- lapply(players_temp[,c(2:7)], normalize)
-fig <- plot_ly(players_temp[1:4,], x = ~league, y=~avg_ps4, type="bar", name="avg ps4_price")
-fig <- fig %>% add_trace(y = ~avg_pace, name = 'avg pace', type = "bar")
-fig <- fig %>% add_trace(y = ~avg_shooting, name = 'avg shooting', type = "bar")
-fig <- fig %>% add_trace(y = ~avg_def, name = 'avg defending', type = "bar")
-fig <- fig %>% add_trace(y = ~avg_age, name = 'avg age', type = "bar")
-fig <- fig %>% add_trace(y = ~count, name = 'count', type = "bar")
-fig <- fig %>% layout(yaxis = list(title = 'Normalized Value'), title = "Normalized Stats of 4 Most Expensive Leagues", barmode = 'group')
-fig
+league_stats <- plot_ly(players_temp[1:4,], x = ~league, y=~avg_ps4, type="bar", name="avg ps4_price")
+league_stats <- league_stats %>% add_trace(y = ~avg_pace, name = 'avg pace', type = "bar")
+league_stats <- league_stats %>% add_trace(y = ~avg_shooting, name = 'avg shooting', type = "bar")
+league_stats <- league_stats %>% add_trace(y = ~avg_def, name = 'avg defending', type = "bar")
+league_stats <- league_stats %>% add_trace(y = ~avg_age, name = 'avg age', type = "bar")
+league_stats <- league_stats %>% add_trace(y = ~count, name = 'count', type = "bar")
+league_stats <- league_stats %>% layout(yaxis = list(title = 'Normalized Value'), title = "Normalized Stats of 4 Most Expensive Leagues", barmode = 'group')
+league_stats
 
 ```
 We compared leagues and plotted averages for the four most expensive leagues in fifa. Observe how icons is superior in almost everything, and absolutely dwarfs every other league's normalized average price
+# Method
+tried rfs.
+weren't satisfied
 ```{r}
-naPercentage <- function(col_name){
-  return(sum(is.na(players_read[,col_name]))/nrow(players_read))
-}
-nas <- c("xbox_min", "xbox_last", "xbox_max", "ps4_min","ps4_last", "ps4_max", "pc_min","pc_last", "pc_max")
-price_nas <- data.frame(nas = nas, console = rep(c("xbox","ps4", "pc"), each=3), type = rep(c("min", "last", "max"), times=3))
-price_nas[,1] <- sapply(price_nas[,1],naPercentage)
-fig <- plot_ly(price_nas, x = ~console, y=~nas, color = ~type,type="bar")
-fig <- fig %>% layout(yaxis = list(title = 'Percentage'), title = "Percentage Nulls per Console", barmode = 'group')
-
-fig
+keeper_elbow
+defender_elbow
+midfielder_elbow
+attacker_elbow
 ```
+tried to cluster, as a means to remove outliers
 ```{r}
-players <- players_read[players_read$league != "Icons",]
-xbox_vec <- c("xbox_last","xbox_max", "xbox_min", "xbox_prp")
-pc_vec <- c("pc_last","pc_max", "pc_min", "pc_prp", "ps4_max", "ps4_min")
-player_unused_cols <- c("futbin_id","date_of_birth","origin","added_date", "base_id", "resource_id", xbox_vec, pc_vec, "ps4_prp", "specialities", "traits")
-players <- players[,!names(players)%in%player_unused_cols]
+
 ```
 ```{r}
-fig <- plot_ly(data = players, x = ~overall, y = ~ps4_last)
-fig
-```
-```{r}
-keepers <- players[players$position=="GK",]
-keeper_unused_cols <- c("pace", "dribbling", "passing","defending", "shooting", "physicality", "cb", "rb",
-"lb", "rwb", "lwb", "cdm","cm","rm", "lm", "cm", "cam", "cf", "rf", "lf", "rw", "lw", "st", "skill_moves")
-keepers <- keepers[,!names(keepers)%in%keeper_unused_cols]
-keeper_numeric <- names(select_if(keepers, is.numeric))
-keepers <- keepers[complete.cases(keepers),]
-keepers[,c(keeper_numeric)] <- lapply(keepers[,c(keeper_numeric)], normalize)
-
-line <- players %>% filter(position!="GK")
-line_unused_cols <- c("gk_diving", "gk_reflexes", "gk_speed", "gk_positoning", "gk_kicking", "gk_handling", "skill_moves")
-line <- line[,!names(line)%in%line_unused_cols]
-line_numeric <- names(select_if(line, is.numeric))
-line <- line[complete.cases(line),]
-line[,c(line_numeric)] <- lapply(line[,c(line_numeric)], normalize)
-```
-
-```{r}
-clust_county <- keepers %>% select("ps4_last")
-
-# use elbow chart to find best number of centers for kmeans
-explained_variance = function(data_in, k){
-  # Running the kmeans algorithm.
-  set.seed(1)
-  kmeans_obj = kmeans(data_in, centers = k, algorithm = "Lloyd", iter.max = 30)
-  
-  # Variance accounted for by clusters:
-  # var_exp = intercluster variance / total variance
-  var_exp = kmeans_obj$betweenss / kmeans_obj$totss
-  var_exp  
-}
-
-explained_var_county = sapply(1:10, explained_variance, data_in = clust_county) #removing variables that won't be used for cluster
-
-elbow_data_county = data.frame(k = 1:10, explained_var_county)
-
-# Plotting data.
-ggplot(elbow_data_county, 
-       aes(x = k,  
-           y = explained_var_county)) + 
-  geom_point(size = 4) +           #<- sets the size of the data points
-  geom_line(size = 1) +            #<- sets the thickness of the line
-  xlab('k') + 
-  ylab('Inter-cluster Variance / Total Variance') + 
-  theme_light()
-```
-```{r echo=FALSE, results=FALSE, warning=FALSE, message=FALSE}
-# 4 centers was found to be the best
-set.seed(1)
-kmeans_obj_county = kmeans(clust_county, centers = 2, 
-                        algorithm = "Lloyd")   #<- there are several ways of implementing
-
-kmeans_obj_county
-
-kmeans_obj_county$cluster
-
-# create column for cluster assignment
-county_cluster_data <- cbind(keepers, clusterNum = kmeans_obj_county$cluster)
-
-# breakup the datset into their respective cluster datasets
-cluster_1_data <- filter(county_cluster_data, clusterNum == 1) 
-cluster_2_data <- filter(county_cluster_data, clusterNum == 2) 
-```
-```{r}
-fig <- plot_ly(data = county_cluster_data, x = ~overall, y = ~ps4_last, color=~clusterNum)
-fig
-```
-
-
-```{r}
-nrow(cluster_2_data)
-```
-```{r echo=FALSE, results=FALSE}
-set.seed(22)
-part_index <- createDataPartition(cluster_2_data$ps4_last,
-                                           times=1,
-                                           p = 0.80,
-                                           groups=1,
-                                           list=FALSE)
-
-train <- county_cluster_data[part_index,3:54]
-test <- county_cluster_data[-part_index,3:54]
-
-
-# Calculate the initial mtry level
-
-mytry_tune <- function(x){
-  xx <- dim(x)[2]-1
-  return(sqrt(xx))
-}
-
-mytry_tune(county_cluster_data)
-```
-```{r}
-set.seed(22)
-keepers_RF = randomForest(ps4_last~., train, ntree = 500,
-                            mtry = 7,            
-                            replace = TRUE,      
-                            sampsize = 100,      
-                            nodesize = 5,        
-                            importance = TRUE,   
-                            proximity = FALSE,    
-                            norm.votes = TRUE,   
-                            keep.forest = TRUE,  
-                            keep.inbag = TRUE)   
-
-importance <- as.data.frame(keepers_RF$importance)
-importance <- importance %>% mutate("%IncMSE"=round((`%IncMSE`),6))
-
-importance[order(importance[,"%IncMSE"], decreasing =TRUE),]
-```
-
-```{r echo=FALSE}
-keepers_predict = predict(keepers_RF,newdata=test)
-
-sqrt(mean((keepers_predict-test$ps4_last)^2))
-#mean(abs(keepers_predict-test$ps4_last))
-
-sqrt(mean((mean(train$ps4_last)-test$ps4_last)^2))
-#mean(abs(mean(train$ps4_last)-test$ps4_last))
+cluster_vis(keeper_cluster)
+cluster_vis(defender_cluster)
+cluster_vis(midfielder_cluster)
+cluster_vis(attacker_cluster)
 
 ```
