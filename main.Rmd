@@ -9,21 +9,40 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(plotly)
+
+library(tidyverse)
+library(randomForest)
+library(rio)
+library(mltools)
+library(data.table)
+library(caret)
+library(C50)
+library(pROC)
+library(plotly)
+library(MLmetrics)
+library(ROCR)
+library(rpart)
+library(psych)
+library(plyr)
+library(rattle)
+library(rpart.plot)
+library(NbClust)
 ```
 
 ## R Markdowns
 ```{r}
 players_read <- read.csv("fut_bin21_players.csv")
-```
-```{r}
 normalize <- function(x){
  (x - min(x)) / (max(x) - min(x))
 }
+```
+```{r}
 players_temp <- players_read[!is.na(players_read$ps4_last),]
 players_temp <- players_temp %>% filter(position!="GK") %>% group_by(league) %>% 
   summarise(avg_pace = sum(pace)/n(), avg_shooting = sum(shooting)/n(), avg_ps4 = sum(ps4_last)/n(),
             avg_def = sum(defending)/n(), avg_age = sum(age)/n(), count =n()) 
 players_temp <- players_temp[order(players_temp$avg_ps4, decreasing =TRUE),]
+players_temp[,c(2:7)] <- lapply(players_temp[,c(2:7)], normalize)
 
 players_temp[,c(2:7)] <- lapply(players_temp[,c(2:7)], normalize)
 fig <- plot_ly(players_temp[1:4,], x = ~league, y=~avg_ps4, type="bar", name="avg ps4_price")
@@ -51,13 +70,13 @@ fig
 ```{r}
 players <- players_read[players_read$league != "Icons",]
 xbox_vec <- c("xbox_last","xbox_max", "xbox_min", "xbox_prp")
-pc_vec <- c("pc_last","pc_max", "pc_min", "pc_prp")
-player_unused_cols <- c("futbin_id","date_of_birth","origin","added_date", "base_id", "resource_id", xbox_vec, pc_vec, "ps4_prp", "specialities")
+pc_vec <- c("pc_last","pc_max", "pc_min", "pc_prp", "ps4_max", "ps4_min")
+player_unused_cols <- c("futbin_id","date_of_birth","origin","added_date", "base_id", "resource_id", xbox_vec, pc_vec, "ps4_prp", "specialities", "traits")
 players <- players[,!names(players)%in%player_unused_cols]
-```
-```{r}
+
 keepers <- players[players$position=="GK",]
 line <- players %>% filter(position!="GK")
+
 ```
 
 
@@ -78,26 +97,62 @@ keeper_unused_cols <- c("pace", "dribbling", "passing","defending", "shooting", 
 keepers <- keepers[,!names(keepers)%in%keeper_unused_cols]
 ```
 ```{r}
-
-keepers_ps4 <- keepers[,!names(keepers)%in%c(xbox_vec,pc_vec,"ps4_prp")]
-#keepers_xbox <- keepers[,!names(keepers)%in%c(ps4_vec,pc_vec)] #target would be mostly nulls
-#keepers_pc <- keepers[,!names(keepers)%in%c(ps4_vec,xbox_vec)] #target would be mostly nulls
-```
-```{r}
-```
-```{r}
 table(keepers$specialities)
 ```
+# Random Forest Model
+
+```{r echo=FALSE, results=FALSE}
+keepers<- keepers[complete.cases(keepers),]
+keepers$ps4_last <- normalize(keepers$ps4_last)# Create test, tune and training sets 
+
+set.seed(22)
+part_index <- createDataPartition(keepers$ps4_last,
+                                           times=1,
+                                           p = 0.80,
+                                           groups=1,
+                                           list=FALSE)
+
+train <- keepers[part_index,3:54]
+test <- keepers[-part_index,3:54]
 
 
-#Peter's code
+# Calculate the initial mtry level
+
+mytry_tune <- function(x){
+  xx <- dim(x)[2]-1
+  return(sqrt(xx))
+}
+
+mytry_tune(keepers)
+```
 ```{r}
-players <- read.csv("fut_bin21_players.csv")
-players <- players[players$league != "Icons",]
+set.seed(22)
+keepers_RF = randomForest(ps4_last~., train, ntree = 500,
+                            mtry = 7,            
+                            replace = TRUE,      
+                            sampsize = 100,      
+                            nodesize = 5,        
+                            importance = TRUE,   
+                            proximity = FALSE,    
+                            norm.votes = TRUE,   
+                            keep.forest = TRUE,  
+                            keep.inbag = TRUE)   
+
+importance <- as.data.frame(keepers_RF$importance)
+importance <- importance %>% mutate("%IncMSE"=round((`%IncMSE`),6))
+
+importance
 ```
 
-```{r}
-line <- players %>% filter(position!="GK")
+```{r echo=FALSE}
+keepers_predict = predict(keepers_RF,newdata=test)
+
+sqrt(mean((keepers_predict-test$ps4_last)^2))
+#mean(abs(keepers_predict-test$ps4_last))
+
+sqrt(mean((mean(train$ps4_last)-test$ps4_last)^2))
+#mean(abs(mean(train$ps4_last)-test$ps4_last))
+
 ```
 
 ```{r}
@@ -109,24 +164,202 @@ nrow(line)
 ```
 
 ```{r}
-line_unused_cols <- c("gk_diving", "gk_reflexes", "gk_speed", "gk_positoning", "gk_kicking", "gk_handling", "cb", "rb","lb", "rwb", "lwb", "cdm","cm","rm", "lm", "cm", "cam", "cf", "rf", "lf", "rw", "lw", "st")
+#line_unused_cols <- c("gk_diving", "gk_reflexes", "gk_speed", "gk_positoning", "gk_kicking", "gk_handling", "cb", "rb","lb", "rwb", "lwb", "cdm","cm","rm", "lm", "cm", "cam", "cf", "rf", "lf", "rw", "lw", "st")
+line_unused_cols <- c("gk_diving", "gk_reflexes", "gk_speed", "gk_positoning", "gk_kicking", "gk_handling")
 line <- line[,!names(line)%in%line_unused_cols]
 
-```
-
-```{r}
 defenders <- line[line$position%in%c("CB","LCB", "RCB", "LWB", "RWB", "RB", "LB"),]
 midfielders <- line[line$position%in%c("CM","RCM","LCM", "CDM", "CAM", "LM", "RM"),]
 attackers <- line[line$position%in%c("CF","RF","LF", "ST", "RW", "LW"),]
 ```
+# Defenders
+```{r}
+defenders <- defenders[complete.cases(defenders),]
+defenders$ps4_last <- normalize(defenders$ps4_last)
+# Create test, tune and training sets 
+
+set.seed(22)
+part_index <- createDataPartition(defenders$ps4_last,
+                                           times=1,
+                                           p = 0.80,
+                                           groups=1,
+                                           list=FALSE)
+
+train <- defenders[part_index,3:ncol(defenders)]
+test <- defenders[-part_index,3:ncol(defenders)]
+
+
+# Calculate the initial mtry level
+
+mytry_tune <- function(x){
+  xx <- dim(x)[2]-1
+  return(sqrt(xx))
+}
+
+mytry_tune(defenders)
+```
+```{r}
+set.seed(22)
+defenders_RF = randomForest(ps4_last~., train, ntree = 500,
+                            mtry = 7,            
+                            replace = TRUE,      
+                            sampsize = 100,      
+                            nodesize = 5,        
+                            importance = TRUE,   
+                            proximity = FALSE,    
+                            norm.votes = TRUE,   
+                            keep.forest = TRUE,  
+                            keep.inbag = TRUE)   
+
+importance <- as.data.frame(defenders_RF$importance)
+importance[order(importance[,"%IncMSE"], decreasing =TRUE),]
+```
+```{r echo=FALSE}
+defenders_predict = predict(defenders_RF,newdata=test)
+
+sqrt(mean((defenders_predict-test$ps4_last)^2))
+#mean(abs(defenders_predict-test$ps4_last))
+
+sqrt(mean((mean(train$ps4_last)-test$ps4_last)^2))
+#mean(abs(mean(train$ps4_last)-test$ps4_last))
+
+```
+# Midfielders
+```{r}
+midfielders <- midfielders[complete.cases(midfielders),]
+midfielders$ps4_last <- normalize(midfielders$ps4_last)
+
+# Create test, tune and training sets 
+
+set.seed(22)
+part_index <- createDataPartition(midfielders$ps4_last,
+                                           times=1,
+                                           p = 0.80,
+                                           groups=1,
+                                           list=FALSE)
+
+train <- midfielders[part_index,3:ncol(midfielders)]
+test <- midfielders[-part_index,3:ncol(midfielders)]
+
+
+# Calculate the initial mtry level
+
+mytry_tune <- function(x){
+  xx <- dim(x)[2]-1
+  return(sqrt(xx))
+}
+
+mytry_tune(midfielders)
+```
+```{r}
+set.seed(22)
+midfielders_RF = randomForest(ps4_last~., train, ntree = 500,
+                            mtry = 7,            
+                            replace = TRUE,      
+                            sampsize = 100,      
+                            nodesize = 5,        
+                            importance = TRUE,   
+                            proximity = FALSE,    
+                            norm.votes = TRUE,   
+                            keep.forest = TRUE,  
+                            keep.inbag = TRUE)   
+
+importance <- as.data.frame(midfielders_RF$importance)
+importance[order(importance[,"%IncMSE"], decreasing =TRUE),]
+```
+```{r echo=FALSE}
+midfielders_predict = predict(midfielders_RF,newdata=test)
+
+sqrt(mean((midfielders_predict-test$ps4_last)^2))
+#mean(abs(defenders_predict-test$ps4_last))
+
+sqrt(mean((mean(train$ps4_last)-test$ps4_last)^2))
+#mean(abs(mean(train$ps4_last)-test$ps4_last))
+
+```
+# Attackers
+```{r}
+test <- attackers
+test$ps4_last <- log2(attackers$ps4_last)
+#test$ps4_last <- normalize(test$ps4_last)
+head(test$ps4_last)
+```
 
 ```{r}
-xbox_vec <- c("xbox_last","xbox_max", "xbox_min", "xbox_prp")
-pc_vec <- c("pc_last","pc_max", "pc_min", "pc_prp")
-line_ps4 <- line[,!names(line)%in%c(xbox_vec ,pc_vec,"ps4_prp")]
-#line_xbox <- line[,!names(line)%in%c(ps4_vec,pc_vec)] #target would be mostly nulls
-#line_pc <- line[,!names(line)%in%c(ps4_vec,xbox_vec)] #target would be mostly nulls
+attackers <- attackers[complete.cases(attackers),]
+attackers$ps4_last <- normalize(attackers$ps4_last)
+
+# Create test, tune and training sets 
+
+set.seed(22)
+part_index <- createDataPartition(attackers$ps4_last,
+                                           times=1,
+                                           p = 0.80,
+                                           groups=1,
+                                           list=FALSE)
+
+train <- attackers[part_index,3:ncol(attackers)]
+test <- attackers[-part_index,3:ncol(attackers)]
+
+
+# Calculate the initial mtry level
+
+mytry_tune <- function(x){
+  xx <- dim(x)[2]-1
+  return(sqrt(xx))
+}
+
+mytry_tune(attackers)
 ```
 ```{r}
+set.seed(22)
+attackers_RF = randomForest(ps4_last~., train, ntree = 500,
+                            mtry = 7,            
+                            replace = TRUE,      
+                            sampsize = 100,      
+                            nodesize = 5,        
+                            importance = TRUE,   
+                            proximity = FALSE,    
+                            norm.votes = TRUE,   
+                            keep.forest = TRUE,  
+                            keep.inbag = TRUE)   
+
+importance <- as.data.frame(attackers_RF$importance)
+importance[order(importance[,"%IncMSE"], decreasing =TRUE),]
 ```
-#End of Peter's code
+```{r echo=FALSE}
+attackers_predict = predict(attackers_RF,newdata=test)
+
+sqrt(mean((attackers_predict-test$ps4_last)^2))
+#mean(abs(defenders_predict-test$ps4_last))
+
+sqrt(mean((mean(train$ps4_last)-test$ps4_last)^2))
+#mean(abs(mean(train$ps4_last)-test$ps4_last))
+
+```
+
+```{r}
+library(ggplot2)
+predVals <- data.frame(value=attackers_predict, type="prediction")
+actVals <- data.frame(value=test$ps4_last, type="actual")
+finalVals <- rbind(predVals, actVals)
+ggplot(finalVals, aes(x=value, color=type)) + geom_density()
+```
+
+```{r}
+ggplot(finalVals, aes(x=value, color=type)) + 
+  geom_boxplot()
+```
+
+
+```{r}
+attackers_glm <- glm(ps4_last~cf+drib_reactions+rw+lm+overall+shoot_positioning, family="gamma", data = attackers)
+
+attackers_predict = predict(attackers_glm,newdata=test)
+
+sqrt(mean((attackers_predict-test$ps4_last)^2))
+#mean(abs(defenders_predict-test$ps4_last))
+
+sqrt(mean((mean(train$ps4_last)-test$ps4_last)^2))
+#mean(abs(mean(train$ps4_last)-test$ps4_last))
+```
