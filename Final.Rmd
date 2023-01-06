@@ -38,6 +38,9 @@ players_temp <- players_temp %>% filter(position!="GK") %>% group_by(league) %>%
   dplyr::summarise(avg_pace = sum(pace)/n(), avg_shooting = sum(shooting)/n(), avg_ps4 = sum(ps4_last)/n(),
             avg_def = sum(defending)/n(), avg_age = sum(age)/n(), count =n()) 
 players_temp <- players_temp[order(players_temp$avg_ps4, decreasing =TRUE),]
+normalize <- function(x){
+ (x - min(x)) / (max(x) - min(x))
+}
 players_temp[,c(2:7)] <- lapply(players_temp[,c(2:7)], normalize)
 
 players_temp[,c(2:7)] <- lapply(players_temp[,c(2:7)], normalize)
