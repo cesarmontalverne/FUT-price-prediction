@@ -1,0 +1,685 @@
+---
+title: "Final"
+author: "cesar"
+date: "2023-01-06"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(plotly)
+
+library(tidyverse)
+library(randomForest)
+library(rio)
+library(mltools)
+library(data.table)
+library(caret)
+library(C50)
+library(pROC)
+library(plotly)
+library(MLmetrics)
+library(ROCR)
+library(rpart)
+library(psych)
+library(plyr)
+library(rattle)
+library(rpart.plot)
+library(NbClust)
+```
+```{r}
+players_read <- read.csv("fut_bin21_players.csv")
+normalize <- function(x){
+ (x - min(x)) / (max(x) - min(x))
+}
+```
+
+
+```{r}
+players <- players_read[players_read$league != "Icons",]
+xbox_vec <- c("xbox_last","xbox_max", "xbox_min", "xbox_prp")
+pc_vec <- c("pc_last","pc_max", "pc_min", "pc_prp", "ps4_max", "ps4_min")
+player_unused_cols <- c("futbin_id","date_of_birth","origin","added_date", "base_id", "resource_id", xbox_vec, pc_vec, "ps4_prp", "specialities", "traits")
+players <- players[,!names(players)%in%player_unused_cols]
+```
+```{r}
+keepers <- players[players$position=="GK",]
+keeper_unused_cols <- c("pace", "dribbling", "passing","defending", "shooting", "physicality", "cb", "rb",
+"lb", "rwb", "lwb", "cdm","cm","rm", "lm", "cm", "cam", "cf", "rf", "lf", "rw", "lw", "st", "skill_moves")
+keepers <- keepers[,!names(keepers)%in%keeper_unused_cols]
+keeper_numeric <- names(select_if(keepers, is.numeric))
+keepers <- keepers[complete.cases(keepers),]
+keepers[,c(keeper_numeric)] <- lapply(keepers[,c(keeper_numeric)], normalize)
+
+line <- players %>% filter(position!="GK")
+line_unused_cols <- c("gk_diving", "gk_reflexes", "gk_speed", "gk_positoning", "gk_kicking", "gk_handling", "skill_moves")
+line <- line[,!names(line)%in%line_unused_cols]
+line_numeric <- names(select_if(line, is.numeric))
+line <- line[complete.cases(line),]
+line[,c(line_numeric)] <- lapply(line[,c(line_numeric)], normalize)
+
+
+defenders <- line[line$position%in%c("CB","LCB", "RCB", "LWB", "RWB", "RB", "LB"),]
+midfielders <- line[line$position%in%c("CM","RCM","LCM", "CDM", "CAM", "LM", "RM"),]
+attackers <- line[line$position%in%c("CF","RF","LF", "ST", "RW", "LW"),]
+```
+
+# Keepers
+
+## Before Clustering
+```{r echo=FALSE, results=FALSE}
+set.seed(22)
+part_index <- createDataPartition(keepers$ps4_last,
+                                           times=1,
+                                           p = 0.80,
+                                           groups=1,
+                                           list=FALSE)
+
+train_b_keeper <- keepers[part_index,3:ncol(keepers)]
+test_b_keeper <- keepers[-part_index,3:ncol(keepers)]
+
+
+# Calculate the initial mtry level
+
+mytry_tune <- function(x){
+  xx <- dim(x)[2]-1
+  return(sqrt(xx))
+}
+
+mytry_tune(keepers)
+```
+```{r}
+set.seed(22)
+b_keepers_RF = randomForest(ps4_last~., train_b_keeper, ntree = 500,
+                            mtry = 7,            
+                            replace = TRUE,      
+                            sampsize = 100,      
+                            nodesize = 5,        
+                            importance = TRUE,   
+                            proximity = FALSE,    
+                            norm.votes = TRUE,   
+                            keep.forest = TRUE,  
+                            keep.inbag = TRUE)   
+
+importance <- as.data.frame(b_keepers_RF$importance)
+importance <- importance %>% mutate("%IncMSE"=round((`%IncMSE`),6))
+
+b_keepers_importance <- importance[order(importance[,"%IncMSE"], decreasing =TRUE),]
+```
+
+```{r echo=FALSE}
+b_keepers_predict = predict(b_keepers_RF,newdata=test_b_keeper)
+
+b_keepers_rmse <- sqrt(mean((b_keepers_predict-test_b_keeper$ps4_last)^2))
+
+b_keepers_rmse2 <-sqrt(mean((mean(train_b_keeper$ps4_last)-test_b_keeper$ps4_last)^2))
+```
+
+## After Clustering
+
+```{r}
+clust_keeper <- keepers %>% select("ps4_last")
+
+# use elbow chart to find best number of centers for kmeans
+explained_variance = function(data_in, k){
+  # Running the kmeans algorithm.
+  set.seed(1)
+  kmeans_obj = kmeans(data_in, centers = k, algorithm = "Lloyd", iter.max = 30)
+  
+  # Variance accounted for by clusters:
+  # var_exp = intercluster variance / total variance
+  var_exp = kmeans_obj$betweenss / kmeans_obj$totss
+  var_exp  
+}
+
+explained_var_keeper = sapply(1:10, explained_variance, data_in = clust_keeper) #removing variables that won't be used for cluster
+
+elbow_data_keeper = data.frame(k = 1:10, explained_var_keeper)
+
+# Plotting data.
+keeper_elbow <- ggplot(elbow_data_keeper, 
+       aes(x = k,  
+           y = explained_var_keeper)) + 
+  geom_point(size = 4) +           #<- sets the size of the data points
+  geom_line(size = 1) +            #<- sets the thickness of the line
+  xlab('k') + 
+  ylab('Inter-cluster Variance / Total Variance') + 
+  theme_light()
+```
+```{r echo=FALSE, results=FALSE, warning=FALSE, message=FALSE}
+# 4 centers was found to be the best
+set.seed(1)
+kmeans_obj_county = kmeans(clust_keeper, centers = 2, 
+                        algorithm = "Lloyd")   #<- there are several ways of implementing
+
+kmeans_obj_county
+
+kmeans_obj_county$cluster
+
+# create column for cluster assignment
+keeper_cluster <- cbind(keepers, clusterNum = kmeans_obj_county$cluster)
+
+# breakup the datset into their respective cluster datasets
+keeper_1 <- filter(keeper_cluster, clusterNum == 1) 
+keeper_2 <- filter(keeper_cluster, clusterNum == 2) 
+```
+
+```{r echo=FALSE, results=FALSE}
+set.seed(22)
+part_index <- createDataPartition(keeper_2$ps4_last,
+                                           times=1,
+                                           p = 0.80,
+                                           groups=1,
+                                           list=FALSE)
+
+train_keeper <- keeper_2[part_index,3:ncol(keeper_2)-1]
+test_keeper <- keeper_2[-part_index,3:ncol(keeper_2)-1]
+
+
+# Calculate the initial mtry level
+
+mytry_tune <- function(x){
+  xx <- dim(x)[2]-1
+  return(sqrt(xx))
+}
+
+mytry_tune(keeper_cluster)
+```
+```{r}
+set.seed(22)
+keepers_RF = randomForest(ps4_last~., train_keeper, ntree = 500,
+                            mtry = 7,            
+                            replace = TRUE,      
+                            sampsize = 100,      
+                            nodesize = 5,        
+                            importance = TRUE,   
+                            proximity = FALSE,    
+                            norm.votes = TRUE,   
+                            keep.forest = TRUE,  
+                            keep.inbag = TRUE)   
+
+importance <- as.data.frame(keepers_RF$importance)
+importance <- importance %>% mutate("%IncMSE"=round((`%IncMSE`),6))
+
+keepers_importance <- importance[order(importance[,"%IncMSE"], decreasing =TRUE),]
+```
+
+```{r echo=FALSE}
+keepers_predict = predict(keepers_RF,newdata=test_keeper)
+
+keepers_rmse <- sqrt(mean((keepers_predict-test_keeper$ps4_last)^2))
+
+keepers_rmse2 <- sqrt(mean((mean(train_keeper$ps4_last)-test_keeper$ps4_last)^2))
+```
+
+# Defenders
+
+## Before Clustering
+```{r echo=FALSE, results=FALSE}
+set.seed(22)
+part_index <- createDataPartition(defenders$ps4_last,
+                                           times=1,
+                                           p = 0.80,
+                                           groups=1,
+                                           list=FALSE)
+
+train_b_defender <- defenders[part_index,3:ncol(defenders)]
+test_b_defender <- defenders[-part_index,3:ncol(defenders)]
+
+
+# Calculate the initial mtry level
+
+mytry_tune <- function(x){
+  xx <- dim(x)[2]-1
+  return(sqrt(xx))
+}
+
+mytry_tune(defenders)
+```
+```{r}
+set.seed(22)
+b_defenders_RF = randomForest(ps4_last~., train_b_defender, ntree = 500,
+                            mtry = 7,            
+                            replace = TRUE,      
+                            sampsize = 100,      
+                            nodesize = 5,        
+                            importance = TRUE,   
+                            proximity = FALSE,    
+                            norm.votes = TRUE,   
+                            keep.forest = TRUE,  
+                            keep.inbag = TRUE)   
+
+importance <- as.data.frame(b_defenders_RF$importance)
+importance <- importance %>% mutate("%IncMSE"=round((`%IncMSE`),6))
+
+b_defenders_importance <- importance[order(importance[,"%IncMSE"], decreasing =TRUE),]
+```
+
+```{r echo=FALSE}
+b_defenders_predict = predict(b_defenders_RF,newdata=test_b_defender)
+
+b_defenders_rmse <- sqrt(mean((b_defenders_predict-test_b_defender$ps4_last)^2))
+
+b_defenders_rmse2 <- sqrt(mean((mean(train_b_defender$ps4_last)-test_b_defender$ps4_last)^2))
+
+```
+
+# After Clustering
+
+```{r}
+clust_defender <- defenders %>% select("ps4_last")
+
+# use elbow chart to find best number of centers for kmeans
+explained_variance = function(data_in, k){
+  # Running the kmeans algorithm.
+  set.seed(1)
+  kmeans_obj = kmeans(data_in, centers = k, algorithm = "Lloyd", iter.max = 30)
+  
+  # Variance accounted for by clusters:
+  # var_exp = intercluster variance / total variance
+  var_exp = kmeans_obj$betweenss / kmeans_obj$totss
+  var_exp  
+}
+
+explained_var_defender = sapply(1:10, explained_variance, data_in = clust_defender) #removing variables that won't be used for cluster
+
+elbow_data_defender = data.frame(k = 1:10, explained_var_defender)
+
+# Plotting data.
+defender_elbow <- ggplot(elbow_data_defender, 
+       aes(x = k,  
+           y = explained_var_defender)) + 
+  geom_point(size = 4) +           #<- sets the size of the data points
+  geom_line(size = 1) +            #<- sets the thickness of the line
+  xlab('k') + 
+  ylab('Inter-cluster Variance / Total Variance') + 
+  theme_light()
+```
+```{r echo=FALSE, results=FALSE, warning=FALSE, message=FALSE}
+# 4 centers was found to be the best
+set.seed(1)
+kmeans_obj_county = kmeans(clust_defender, centers = 2, 
+                        algorithm = "Lloyd")   #<- there are several ways of implementing
+
+
+# create column for cluster assignment
+defender_cluster <- cbind(defenders, clusterNum = kmeans_obj_county$cluster)
+
+# breakup the datset into their respective cluster datasets
+defender_1 <- filter(defender_cluster, clusterNum == 1) 
+defender_2 <- filter(defender_cluster, clusterNum == 2) 
+```
+
+```{r echo=FALSE, results=FALSE}
+set.seed(22)
+part_index <- createDataPartition(defender_2$ps4_last,
+                                           times=1,
+                                           p = 0.80,
+                                           groups=1,
+                                           list=FALSE)
+
+train_defender <- defender_2[part_index,3:ncol(defender_2)-1]
+test_defender <- defender_2[-part_index,3:ncol(defender_2)-1]
+
+
+# Calculate the initial mtry level
+
+mytry_tune <- function(x){
+  xx <- dim(x)[2]-1
+  return(sqrt(xx))
+}
+
+mytry_tune(defender_cluster)
+```
+```{r}
+set.seed(22)
+defenders_RF = randomForest(ps4_last~., train_defender, ntree = 500,
+                            mtry = 7,            
+                            replace = TRUE,      
+                            sampsize = 100,      
+                            nodesize = 5,        
+                            importance = TRUE,   
+                            proximity = FALSE,    
+                            norm.votes = TRUE,   
+                            keep.forest = TRUE,  
+                            keep.inbag = TRUE)   
+
+importance <- as.data.frame(defenders_RF$importance)
+importance <- importance %>% mutate("%IncMSE"=round((`%IncMSE`),6))
+
+defenders_importance <- importance[order(importance[,"%IncMSE"], decreasing =TRUE),]
+```
+
+```{r echo=FALSE}
+defenders_predict = predict(defenders_RF,newdata=test_defender)
+
+defenders_rmse <- sqrt(mean((defenders_predict-test_defender$ps4_last)^2))
+
+defenders_rmse2 <- sqrt(mean((mean(train_defender$ps4_last)-test_defender$ps4_last)^2))
+
+```
+# Midfielders
+
+## Before Clustering
+
+```{r echo=FALSE, results=FALSE}
+set.seed(22)
+part_index <- createDataPartition(midfielders$ps4_last,
+                                           times=1,
+                                           p = 0.80,
+                                           groups=1,
+                                           list=FALSE)
+
+train_b_midfielder <- midfielders[part_index,3:ncol(midfielders)]
+test_b_midfielder <- midfielders[-part_index,3:ncol(midfielders)]
+
+
+# Calculate the initial mtry level
+
+mytry_tune <- function(x){
+  xx <- dim(x)[2]-1
+  return(sqrt(xx))
+}
+
+mytry_tune(midfielders)
+```
+```{r}
+set.seed(22)
+b_midfielders_RF = randomForest(ps4_last~., train_b_midfielder, ntree = 500,
+                            mtry = 7,            
+                            replace = TRUE,      
+                            sampsize = 100,      
+                            nodesize = 5,        
+                            importance = TRUE,   
+                            proximity = FALSE,    
+                            norm.votes = TRUE,   
+                            keep.forest = TRUE,  
+                            keep.inbag = TRUE)   
+
+importance <- as.data.frame(b_midfielders_RF$importance)
+importance <- importance %>% mutate("%IncMSE"=round((`%IncMSE`),6))
+
+b_midfielders_importance <- importance[order(importance[,"%IncMSE"], decreasing =TRUE),]
+```
+
+```{r echo=FALSE}
+b_midfielders_predict = predict(b_midfielders_RF,newdata=test_b_midfielder)
+
+b_midfielders_rmse <- sqrt(mean((b_midfielders_predict-test_b_midfielder$ps4_last)^2))
+
+b_midfielders_rmse2 <- sqrt(mean((mean(train_b_midfielder$ps4_last)-test_b_midfielder$ps4_last)^2))
+```
+## After Clustering
+
+```{r}
+clust_midfielder <- midfielders %>% select("ps4_last")
+
+# use elbow chart to find best number of centers for kmeans
+explained_variance = function(data_in, k){
+  # Running the kmeans algorithm.
+  set.seed(1)
+  kmeans_obj = kmeans(data_in, centers = k, algorithm = "Lloyd", iter.max = 30)
+  
+  # Variance accounted for by clusters:
+  # var_exp = intercluster variance / total variance
+  var_exp = kmeans_obj$betweenss / kmeans_obj$totss
+  var_exp  
+}
+
+explained_var_midfielder = sapply(1:10, explained_variance, data_in = clust_midfielder) #removing variables that won't be used for cluster
+
+elbow_data_midfielder = data.frame(k = 1:10, explained_var_midfielder)
+
+# Plotting data.
+midfielder_elbow <- ggplot(elbow_data_midfielder, 
+       aes(x = k,  
+           y = explained_var_midfielder)) + 
+  geom_point(size = 4) +           #<- sets the size of the data points
+  geom_line(size = 1) +            #<- sets the thickness of the line
+  xlab('k') + 
+  ylab('Inter-cluster Variance / Total Variance') + 
+  theme_light()
+```
+```{r echo=FALSE, results=FALSE, warning=FALSE, message=FALSE}
+# 4 centers was found to be the best
+set.seed(1)
+kmeans_obj_county = kmeans(clust_midfielder, centers = 2, 
+                        algorithm = "Lloyd")   #<- there are several ways of implementing
+
+
+# create column for cluster assignment
+midfielder_cluster <- cbind(midfielders, clusterNum = kmeans_obj_county$cluster)
+
+# breakup the datset into their respective cluster datasets
+midfielder_1 <- filter(midfielder_cluster, clusterNum == 1) 
+midfielder_2 <- filter(midfielder_cluster, clusterNum == 2) 
+```
+
+```{r echo=FALSE, results=FALSE}
+set.seed(22)
+part_index <- createDataPartition(midfielder_2$ps4_last,
+                                           times=1,
+                                           p = 0.80,
+                                           groups=1,
+                                           list=FALSE)
+
+train_midfielder <- midfielder_2[part_index,3:ncol(midfielder_2)-1]
+test_midfielder <- midfielder_2[-part_index,3:ncol(midfielder_2)-1]
+
+
+# Calculate the initial mtry level
+
+mytry_tune <- function(x){
+  xx <- dim(x)[2]-1
+  return(sqrt(xx))
+}
+
+mytry_tune(midfielder_cluster)
+```
+```{r}
+set.seed(22)
+midfielders_RF = randomForest(ps4_last~., train_midfielder, ntree = 500,
+                            mtry = 7,            
+                            replace = TRUE,      
+                            sampsize = 100,      
+                            nodesize = 5,        
+                            importance = TRUE,   
+                            proximity = FALSE,    
+                            norm.votes = TRUE,   
+                            keep.forest = TRUE,  
+                            keep.inbag = TRUE)   
+
+importance <- as.data.frame(midfielders_RF$importance)
+importance <- importance %>% mutate("%IncMSE"=round((`%IncMSE`),6))
+
+midfielders_importance <- importance[order(importance[,"%IncMSE"], decreasing =TRUE),]
+```
+
+```{r echo=FALSE}
+midfielders_predict = predict(midfielders_RF,newdata=test_midfielder)
+
+midfielders_rmse <- sqrt(mean((midfielders_predict-test_midfielder$ps4_last)^2))
+
+midfielders_rmse2 <- sqrt(mean((mean(train_midfielder$ps4_last)-test_midfielder$ps4_last)^2))
+
+```
+# Attackers
+
+## Before Clustering
+```{r echo=FALSE, results=FALSE}
+set.seed(22)
+part_index <- createDataPartition(attackers$ps4_last,
+                                           times=1,
+                                           p = 0.80,
+                                           groups=1,
+                                           list=FALSE)
+
+train_b_attacker <- attackers[part_index,3:ncol(attackers)]
+test_b_attacker <- attackers[-part_index,3:ncol(attackers)]
+
+
+# Calculate the initial mtry level
+
+mytry_tune <- function(x){
+  xx <- dim(x)[2]-1
+  return(sqrt(xx))
+}
+
+mytry_tune(attackers)
+```
+```{r}
+set.seed(22)
+b_attackers_RF = randomForest(ps4_last~., train_b_attacker, ntree = 500,
+                            mtry = 7,            
+                            replace = TRUE,      
+                            sampsize = 100,      
+                            nodesize = 5,        
+                            importance = TRUE,   
+                            proximity = FALSE,    
+                            norm.votes = TRUE,   
+                            keep.forest = TRUE,  
+                            keep.inbag = TRUE)   
+
+importance <- as.data.frame(b_attackers_RF$importance)
+importance <- importance %>% mutate("%IncMSE"=round((`%IncMSE`),6))
+
+b_attackers_importance <- importance[order(importance[,"%IncMSE"], decreasing =TRUE),]
+```
+
+```{r echo=FALSE}
+b_attackers_predict = predict(b_attackers_RF,newdata=test_b_attacker)
+
+b_attackers_rmse <- sqrt(mean((b_attackers_predict-test_b_attacker$ps4_last)^2))
+
+b_attackers_rmse2 <- sqrt(mean((mean(train_b_attacker$ps4_last)-test_b_attacker$ps4_last)^2))
+
+```
+
+## After Clustering
+
+```{r}
+clust_attacker <- attackers %>% select("ps4_last")
+
+# use elbow chart to find best number of centers for kmeans
+explained_variance = function(data_in, k){
+  # Running the kmeans algorithm.
+  set.seed(1)
+  kmeans_obj = kmeans(data_in, centers = k, algorithm = "Lloyd", iter.max = 30)
+  
+  # Variance accounted for by clusters:
+  # var_exp = intercluster variance / total variance
+  var_exp = kmeans_obj$betweenss / kmeans_obj$totss
+  var_exp  
+}
+
+explained_var_attacker = sapply(1:10, explained_variance, data_in = clust_attacker) #removing variables that won't be used for cluster
+
+elbow_data_attacker = data.frame(k = 1:10, explained_var_attacker)
+
+# Plotting data.
+attacker_elbow <- ggplot(elbow_data_attacker, 
+       aes(x = k,  
+           y = explained_var_attacker)) + 
+  geom_point(size = 4) +           #<- sets the size of the data points
+  geom_line(size = 1) +            #<- sets the thickness of the line
+  xlab('k') + 
+  ylab('Inter-cluster Variance / Total Variance') + 
+  theme_light()
+```
+```{r echo=FALSE, results=FALSE, warning=FALSE, message=FALSE}
+# 4 centers was found to be the best
+set.seed(1)
+kmeans_obj_county = kmeans(clust_attacker, centers = 2, 
+                        algorithm = "Lloyd")   #<- there are several ways of implementing
+
+
+# create column for cluster assignment
+attacker_cluster <- cbind(attackers, clusterNum = kmeans_obj_county$cluster)
+
+# breakup the datset into their respective cluster datasets
+attacker_1 <- filter(attacker_cluster, clusterNum == 1) 
+attacker_2 <- filter(attacker_cluster, clusterNum == 2) 
+```
+
+```{r echo=FALSE, results=FALSE}
+set.seed(22)
+part_index <- createDataPartition(attacker_1$ps4_last,
+                                           times=1,
+                                           p = 0.80,
+                                           groups=1,
+                                           list=FALSE)
+
+train_attacker <- attacker_1[part_index,3:ncol(attacker_1)-1]
+test_attacker <- attacker_1[-part_index,3:ncol(attacker_1)-1]
+
+
+# Calculate the initial mtry level
+
+mytry_tune <- function(x){
+  xx <- dim(x)[2]-1
+  return(sqrt(xx))
+}
+
+mytry_tune(attacker_cluster)
+```
+```{r}
+set.seed(22)
+attackers_RF = randomForest(ps4_last~., train_attacker, ntree = 500,
+                            mtry = 7,            
+                            replace = TRUE,      
+                            sampsize = 100,      
+                            nodesize = 5,        
+                            importance = TRUE,   
+                            proximity = FALSE,    
+                            norm.votes = TRUE,   
+                            keep.forest = TRUE,  
+                            keep.inbag = TRUE)   
+
+importance <- as.data.frame(attackers_RF$importance)
+importance <- importance %>% mutate("%IncMSE"=round((`%IncMSE`),6))
+
+attackers_importance <- importance[order(importance[,"%IncMSE"], decreasing =TRUE),]
+```
+
+```{r echo=FALSE}
+attackers_predict = predict(attackers_RF,newdata=test_attacker)
+
+attackers_rmse <- sqrt(mean((attackers_predict-test_attacker$ps4_last)^2))
+
+attackers_rmse2 <- sqrt(mean((mean(train_attacker$ps4_last)-test_attacker$ps4_last)^2))
+
+```
+```{r}
+players_temp <- players_read[!is.na(players_read$ps4_last),]
+players_temp <- players_temp %>% filter(position!="GK") %>% group_by(league) %>% 
+  dplyr::summarise(avg_pace = sum(pace)/n(), avg_shooting = sum(shooting)/n(), avg_ps4 = sum(ps4_last)/n(),
+            avg_def = sum(defending)/n(), avg_age = sum(age)/n(), count =n()) 
+players_temp <- players_temp[order(players_temp$avg_ps4, decreasing =TRUE),]
+players_temp[,c(2:7)] <- lapply(players_temp[,c(2:7)], normalize)
+
+players_temp[,c(2:7)] <- lapply(players_temp[,c(2:7)], normalize)
+league_stats <- plot_ly(players_temp[1:4,], x = ~league, y=~avg_ps4, type="bar", name="avg ps4_price")
+league_stats <- league_stats %>% add_trace(y = ~avg_pace, name = 'avg pace', type = "bar")
+league_stats <- league_stats %>% add_trace(y = ~avg_shooting, name = 'avg shooting', type = "bar")
+league_stats <- league_stats %>% add_trace(y = ~avg_def, name = 'avg defending', type = "bar")
+league_stats <- league_stats %>% add_trace(y = ~avg_age, name = 'avg age', type = "bar")
+league_stats <- league_stats %>% add_trace(y = ~count, name = 'count', type = "bar")
+league_stats <- league_stats %>% layout(yaxis = list(title = 'Normalized Value'), title = "Normalized Stats of 4 Most Expensive Leagues", barmode = 'group')
+
+keeper_outliers <- keeper_cluster %>% group_by(clusterNum) %>% dplyr::summarise(count=n())
+defenders_outliers <- defender_cluster %>% group_by(clusterNum) %>% dplyr::summarise(count=n())
+midfielders_outliers <- midfielder_cluster %>% group_by(clusterNum) %>% dplyr::summarise(count=n())
+attackers_outliers <- attacker_cluster %>% group_by(clusterNum) %>% dplyr::summarise(count=n())
+
+save(players_read, players,
+     b_keepers_importance,b_keepers_rmse,b_keepers_rmse2,keeper_elbow,keeper_cluster,
+     keepers_importance,keepers_rmse,keepers_rmse2,
+     b_defenders_importance,b_defenders_rmse,b_defenders_rmse2,defender_elbow,
+     defender_cluster, defenders_importance,defenders_rmse,defenders_rmse2,
+     b_midfielders_importance,b_midfielders_rmse,b_midfielders_rmse2,midfielder_elbow,
+     midfielder_cluster,midfielders_importance,midfielders_rmse,midfielders_rmse2,
+     b_attackers_importance,b_attackers_rmse,b_attackers_rmse2,attacker_elbow,
+     attacker_cluster,attackers_importance,attackers_rmse,attackers_rmse2,
+     league_stats, keeper_outliers, defenders_outliers, midfielders_outliers, attackers_outliers,
+     file = "workdata.RData")
+```
