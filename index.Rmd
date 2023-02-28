@@ -1,8 +1,13 @@
 ---
-title: "Final"
+title: "Predicting Fifa Ultimate Team Prices"
 author: "Cesar Godoy and Peter Saliba"
 date: "2023-01-06"
-output: html_document
+output:
+  html_document:
+    toc: TRUE
+    theme: journal
+    toc_collapse: TRUE
+    toc_float: TRUE
 ---
 
 ```{r setup, include=FALSE}
@@ -52,9 +57,6 @@ What factors are most important in predicting the price certain players will sel
 
 # Exploratory Data Analysis
 
-```{r}
-str(players_read)
-```
 ```{r include = FALSE}
 naPercentage <- function(col_name){
   return(sum(is.na(players_read[,col_name]))/nrow(players_read))
@@ -65,22 +67,20 @@ price_nas[,1] <- sapply(price_nas[,1],naPercentage)
 target_nas <- plot_ly(price_nas, x = ~console, y=~nas, color = ~type,type="bar")
 target_nas <- target_nas %>% layout(yaxis = list(title = 'Percentage'), title = "Percentage Nulls per Console", barmode = 'group')
 
-cluster_vis <- function(df){ plot_ly(data = df, x = ~overall, y = ~ps4_last, color=~clusterNum)}
+
 players_price_points <- plot_ly(data = players, x = ~overall, y = ~ps4_last, trace="scatter")
 ```
 This dataset had many possible variables that represented player's price. The first thing we did was to analyze which one of them was the most appropriate to be our target variable.
-```{r}
-summary(players_read[,84:95])
-```
-```{r}
+
+```{r echo = FALSE}
 target_nas
 ```
 As you can see in the bar plot, ps4 is the only viable choice. Since the ps4 max is the buy now price and ps4 min is the minimum first bid, they are not exactly appropriate for our investigation. Ps4_last is what players went for in the market, so we chose that
-```{r}
+```{r echo = FALSE, message=FALSE, warning=FALSE}
 players_price_points
 ```
 Next, we observed our distribution was pretty exponential. This made sense to us, since almost no one uses the worst players. In order to mitigate that, we decided to take a look at how the Icons team 
-```{r}
+```{r echo = FALSE}
 league_stats
 ```
 We compared leagues and plotted averages for the four most expensive leagues in fifa. Observe how icons is superior in almost everything, and absolutely dwarfs every other league's normalized average price
@@ -90,50 +90,102 @@ We compared leagues and plotted averages for the four most expensive leagues in 
 Initially we used a random forest algorithm to predict players' prices in FUT marketplace. 
 After observing the density plot, we came to the conclusion that our result could be skewed due to outliers.
 
-```{r}
+```{r echo = FALSE}
 grid.arrange(keeper_elbow,defender_elbow,midfielder_elbow,attacker_elbow)
 ```
 After using kmeans to cluster our data in terms of price, it did seem to be the case that there were two very distinct groups in each position
-```{r}
-cluster_vis(keeper_cluster)
-cluster_vis(defender_cluster)
-cluster_vis(midfielder_cluster)
-cluster_vis(attacker_cluster)
-```
-After running the algorithm, our suspicions were proved right
-```{r}
-knitr::kable(keeper_outliers, caption="keeper")
-knitr::kable(defenders_outliers, caption="defender")
-knitr::kable(midfielders_outliers, caption="midfielder")
-knitr::kable(attackers_outliers, caption="attacker")
+```{r echo = FALSE, message=FALSE, warning=FALSE}
+cluster_vis <- function(df, t){ 
+  return(
+    plot_ly(data = df, x = ~overall, y = ~ps4_last, color=~clusterNum) %>% 
+      layout(showlegend = FALSE, 
+annotations = list(
+ list(x = 0.4 , y = 0.9, text = t, showarrow = F, xref='paper', yref='paper')
+ )))
+}
+keeper_cluster$clusterNum <- as.character(keeper_cluster$clusterNum)
+defender_cluster$clusterNum <- as.character(defender_cluster$clusterNum)
+midfielder_cluster$clusterNum <- as.character(midfielder_cluster$clusterNum)
+attacker_cluster$clusterNum <- as.character(attacker_cluster$clusterNum)
+
+subplot(cluster_vis(keeper_cluster, "Goalkeepers"),
+        cluster_vis(defender_cluster, "Defenders"),
+        cluster_vis(midfielder_cluster, "Midfielders"),
+        cluster_vis(attacker_cluster, "Attackers"), nrows=2) %>% 
+  layout(title = "Players with Outlying Prices by Position")
 
 ```
+After running the algorithm, our suspicions were proved right
+
+## Price Outliers by Position {.tabset}
+
+### Keeper Price Outlier
+```{r echo=FALSE}
+attackers_outliers <- attackers_outliers%>%mutate(clusterNum=3-clusterNum)
+plot_ly(keeper_outliers, labels = ~clusterNum, values = ~count, type = 'pie')
+```
+### Defender Price Outliers
+```{r echo=FALSE}
+plot_ly(defenders_outliers, labels = ~clusterNum, values = ~count, type = 'pie')
+```
+### Midfielder Price Outliers
+```{r echo=FALSE}
+plot_ly(midfielders_outliers, labels = ~clusterNum, values = ~count, type = 'pie')
+```
+### Attacker Price Outliers
+```{r echo=FALSE}
+plot_ly(attackers_outliers, labels = ~clusterNum, values = ~count, type = 'pie')
+```
+## {-}
 
 So we removed the outliers from and run random forests on it again.
 
 # Results
 
-```{r}
+```{r echo = FALSE}
 results <- data.frame(model=c("before","after"), keeper = c(b_keepers_rmse, keepers_rmse), defender = c(b_defenders_rmse,defenders_rmse),
                       midfielders = c(b_midfielders_rmse, midfielders_rmse), attackers = c(b_attackers_rmse, attackers_rmse))
 knitr::kable(results, caption="Results")
 ```
-```{r}
-b_keepers_importance
-keepers_importance
+```{r echo=FALSE}
+top_5 <- function(b_df, a_df, title){ 
+  return(
+    subplot(
+    plot_ly(
+    x = row.names(b_df[1:5,]),
+    y = b_df[1:5,]$`%IncMSE`,
+    name = "Before Removing Outliers",
+    type = "bar"
+  ),
+  plot_ly(
+    x = row.names(a_df[1:5,]),
+    y = a_df[1:5,]$`%IncMSE`,
+    name = "After Removing Outliers",
+    type = "bar"
+  ) %>% layout(title=title))
+  )
+}
 ```
-```{r}
-b_defenders_importance
-defenders_importance
+
+## Top 5 Predictive Characteristics per Position {.tabset}
+
+### Keepers
+```{r echo=FALSE}
+top_5(b_keepers_importance,keepers_importance, "Top 5 Most Predictive Characteristics for Keepers")
 ```
-```{r}
-b_midfielders_importance
-midfielders_importance
+### Defenders
+```{r echo=FALSE}
+top_5(b_defenders_importance,defenders_importance, "Top 5 Most Predictive Characteristics for Defenders")
 ```
-```{r}
-b_attackers_importance
-attackers_importance
+### Midfielders
+```{r echo=FALSE}
+top_5(b_midfielders_importance,midfielders_importance, "Top 5 Most Predictive Characteristics for Midfielders")
 ```
+### Attackers
+```{r echo=FALSE}
+top_5(b_attackers_importance,attackers_importance, "Top 5 Most Predictive Characteristics for Attackers")
+```
+## {-}
 # Conclusion
 
 After examining the models, we found that there was data suggesting that after removing outliers, the RMSE for goalkeepers, midfielders, and attackers had a significant decrease. Defenders, however, did not show much of a significant decrease in the RMSE. We found that the three most important factors for goalkeepers before clustering were their overall rating, dribbling reactions, and handling. After using the clustering method, we found that the most important factors were their overall rating, diving, and reflexes, which was not our initial hypothesis. For defenders, we found that the most important factors were the left back position overall rating, the left wing/back position overall rating, and the overall rating when we did not cluster, but when we did cluster, we found that the most important factors were overall rating, dribbling ball control, and shooting power. In conclusion, there were lots of factors that were surprising to us in determining the price of players in the ultimate team marketplace. Perhaps other machine learning methods could have given us different results and hence came to a different conclusion about the factors impacting our target variable.
